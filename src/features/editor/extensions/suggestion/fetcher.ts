@@ -1,0 +1,68 @@
+import ky, { HTTPError } from "ky";
+import { z } from "zod";
+import { toast } from "sonner";
+
+const suggestionRequestSchema = z.object({
+  fileName: z.string(),
+  code: z.string(),
+  currentLine: z.string(),
+  previousLines: z.string(),
+  textBeforeCursor: z.string(),
+  textAfterCursor: z.string(),
+  nextLines: z.string(),
+  lineNumber: z.number(),
+  userId: z.string().optional(),
+});
+
+const suggestionResponseSchema = z.object({
+  suggestion: z.string(),
+});
+
+type SuggestionRequest = z.infer<typeof suggestionRequestSchema>;
+type SuggestionResponse = z.infer<typeof suggestionResponseSchema>;
+
+export const fetcher = async (
+  payload: SuggestionRequest,
+  signal: AbortSignal,
+): Promise<string | null> => {
+  try {
+    const validatedPayload = suggestionRequestSchema.parse(payload);
+
+    const response = await ky
+      .post("/api/suggestion", {
+        json: validatedPayload,
+        credentials: "include",
+        signal,
+        timeout: 10_000,
+        retry: 0,
+      })
+      .json<SuggestionResponse>();
+
+    const validatedResponse = suggestionResponseSchema.parse(response);
+
+    return validatedResponse.suggestion || null;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return null;
+    }
+
+    if (error instanceof HTTPError) {
+      let errorMessage = "Failed to fetch AI completion";
+
+      try {
+        const body = await error.response.clone().json() as { error?: string };
+        if (body?.error) {
+          errorMessage = body.error;
+        }
+      } catch {
+        // Keep fallback when response body is not JSON.
+      }
+
+      toast.error(errorMessage);
+      return null;
+    }
+
+    toast.error("Failed to fetch AI completion");
+    return null;
+  }
+};
